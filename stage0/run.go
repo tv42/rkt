@@ -405,12 +405,12 @@ func prepareAppImage(cfg PrepareConfig, appName types.ACName, img types.Hash, cd
 			return fmt.Errorf("cannot use both overlay and user namespace: not implemented yet. (Try --no-overlay)")
 		}
 		if err := cfg.Store.RenderTreeStore(img.String(), false); err != nil {
-			return fmt.Errorf("error rendering tree image: %v", err)
+			return fmt.Errorf("error rendering tree image (C): %v", err)
 		}
 		if err := cfg.Store.CheckTreeStore(img.String()); err != nil {
 			log.Printf("Warning: tree cache is in a bad state. Rebuilding...")
 			if err := cfg.Store.RenderTreeStore(img.String(), true); err != nil {
-				return fmt.Errorf("error rendering tree image: %v", err)
+				return fmt.Errorf("error rendering tree image (A): %v", err)
 			}
 		}
 	} else {
@@ -461,12 +461,12 @@ func prepareStage1Image(cfg PrepareConfig, img types.Hash, cdir string, useOverl
 	}
 
 	if err := cfg.Store.RenderTreeStore(img.String(), false); err != nil {
-		return fmt.Errorf("error rendering tree image: %v", err)
+		return fmt.Errorf("error rendering tree image (B): %v", err)
 	}
 	if err := cfg.Store.CheckTreeStore(img.String()); err != nil {
 		log.Printf("Warning: tree cache is in a bad state. Rebuilding...")
 		if err := cfg.Store.RenderTreeStore(img.String(), true); err != nil {
-			return fmt.Errorf("error rendering tree image: %v", err)
+			return fmt.Errorf("error rendering tree image (D): %v", err)
 		}
 	}
 

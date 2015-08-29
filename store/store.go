@@ -24,6 +24,7 @@ import (
 	"hash"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -231,6 +232,7 @@ func (s Store) TmpDir() (string, error) {
 // key by considering the key a prefix and using the store for resolution.
 // If the key is longer than the full key length, it is first truncated.
 func (s Store) ResolveKey(key string) (string, error) {
+	log.Printf("RESOLVEKEY %q", key)
 	if !strings.HasPrefix(key, hashPrefix) {
 		return "", fmt.Errorf("wrong key prefix")
 	}
@@ -265,6 +267,7 @@ func (s Store) ResolveKey(key string) (string, error) {
 }
 
 func (s Store) ReadStream(key string) (io.ReadCloser, error) {
+	log.Printf("READSTREAM %q", key)
 	key, err := s.ResolveKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("error resolving key: %v", err)
@@ -277,6 +280,7 @@ func (s Store) ReadStream(key string) (io.ReadCloser, error) {
 
 	r, err := s.stores[blobType].ReadStream(key, false)
 	if err != nil && os.IsNotExist(err) {
+		log.Printf("BLOB NOPE %v", err)
 		// try secondary source
 		if r2, err2 := s.readStreamFromIPFS(key); err2 == nil {
 			r, err = r2, err2
@@ -297,16 +301,20 @@ func (s *Store) readStreamFromIPFS(key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("decoded %x", h)
 	mhbuf, err := multihash.Encode(h[:32], multihash.SHA2_512)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("multihash %x", mhbuf)
 	mh, err := multihash.Cast(mhbuf)
 	if err != nil {
 		return nil, err
 	}
 	// b58 will never require quoting
+	log.Printf("b58 %v", mh.B58String())
 	u := "http://localhost:5001/api/v0/block/get?arg=" + mh.B58String()
+	log.Printf("GET %v", u)
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -315,12 +323,15 @@ func (s *Store) readStreamFromIPFS(key string) (io.ReadCloser, error) {
 	// https://github.com/golang/go/issues/8946
 	req.Close = true
 	resp, err := http.DefaultClient.Do(req)
+	log.Printf("GET GOT %v", err)
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("GET STATUS %v", resp.Status)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("http error: %v", resp.Status)
 	}
+	log.Printf("YAY")
 	return resp.Body, nil
 }
 
@@ -477,7 +488,7 @@ func (s Store) RenderTreeStore(key string, rebuild bool) error {
 		return err
 	}
 	if err := s.treestore.Write(key, &s); err != nil {
-		return err
+		return fmt.Errorf("TREE STORE WRITE ERROR: %v", err)
 	}
 	return nil
 }
@@ -545,6 +556,7 @@ func (s Store) WriteRemote(remote *Remote) error {
 
 // Get the ImageManifest with the specified key.
 func (s Store) GetImageManifest(key string) (*schema.ImageManifest, error) {
+	log.Printf("GETIMAGEMANIFEST %q", key)
 	key, err := s.ResolveKey(key)
 	if err != nil {
 		return nil, fmt.Errorf("error resolving key: %v", err)
@@ -558,8 +570,9 @@ func (s Store) GetImageManifest(key string) (*schema.ImageManifest, error) {
 	imj, err := s.stores[imageManifestType].Read(key)
 	// TODO can't fetch manifests from a real CAS because they're
 	// identified by the hash of the *image*, not of the manifest
-	// 
+	//
 	// if err != nil && os.IsNotExist(err) {
+	// 	log.Printf("BLOB NOPE %v", err)
 	// 	// try secondary source
 	// 	if imj2, err2 := s.readFromIPFS(key); err2 == nil {
 	// 		imj, err = imj2, err2
@@ -568,6 +581,7 @@ func (s Store) GetImageManifest(key string) (*schema.ImageManifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving image manifest: %v", err)
 	}
+	log.Printf("MANIFEST %s", imj)
 	var im *schema.ImageManifest
 	if err = json.Unmarshal(imj, &im); err != nil {
 		return nil, fmt.Errorf("error unmarshalling image manifest: %v", err)
@@ -591,6 +605,7 @@ func (s *Store) readFromIPFS(key string) ([]byte, error) {
 // If no version label is requested, ACIs marked as latest in the ACIInfo are
 // preferred.
 func (s Store) GetACI(name types.ACIdentifier, labels types.Labels) (string, error) {
+	log.Printf("GetACI %v %v", name, labels)
 	var curaciinfo *ACIInfo
 	versionRequested := false
 	if _, ok := labels.Get("version"); ok {

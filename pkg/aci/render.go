@@ -16,6 +16,7 @@ package aci
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/coreos/rkt/pkg/uid"
 
@@ -28,8 +29,10 @@ import (
 // Given an imageID, start with the matching image available in the store,
 // build its dependency list and render it inside dir
 func RenderACIWithImageID(imageID types.Hash, dir string, ap acirenderer.ACIRegistry, uidRange *uid.UidRange) error {
+	log.Printf("RenderACIWithImageID %v to %v", imageID, dir)
 	renderedACI, err := acirenderer.GetRenderedACIWithImageID(imageID, ap)
 	if err != nil {
+		log.Printf("RenderACIWithImageID error %v", err)
 		return err
 	}
 	return renderImage(renderedACI, dir, ap, uidRange)
