@@ -17,12 +17,14 @@ package store
 import (
 	"crypto/sha512"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,7 @@ import (
 	"github.com/coreos/rkt/Godeps/_workspace/src/github.com/appc/spec/schema"
 	"github.com/coreos/rkt/Godeps/_workspace/src/github.com/appc/spec/schema/types"
 
+	"github.com/coreos/rkt/Godeps/_workspace/src/github.com/jbenet/go-multihash"
 	"github.com/coreos/rkt/Godeps/_workspace/src/github.com/peterbourgon/diskv"
 )
 
@@ -237,6 +240,9 @@ func (s Store) ResolveKey(key string) (string, error) {
 	if len(key) > lenKey {
 		key = key[:lenKey]
 	}
+	if len(key) == lenKey {
+		return key, nil
+	}
 
 	aciInfos := []*ACIInfo{}
 	err := s.db.Do(func(tx *sql.Tx) error {
@@ -269,7 +275,53 @@ func (s Store) ReadStream(key string) (io.ReadCloser, error) {
 	}
 	defer keyLock.Close()
 
-	return s.stores[blobType].ReadStream(key, false)
+	r, err := s.stores[blobType].ReadStream(key, false)
+	if err != nil && os.IsNotExist(err) {
+		// try secondary source
+		if r2, err2 := s.readStreamFromIPFS(key); err2 == nil {
+			r, err = r2, err2
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (s *Store) readStreamFromIPFS(key string) (io.ReadCloser, error) {
+	const prefix = "sha512-"
+	if !strings.HasPrefix(key, prefix) {
+		return nil, errors.New("only sha512 implemented in IPFS reader")
+	}
+	h, err := hex.DecodeString(key[len(prefix):])
+	if err != nil {
+		return nil, err
+	}
+	mhbuf, err := multihash.Encode(h[:32], multihash.SHA2_512)
+	if err != nil {
+		return nil, err
+	}
+	mh, err := multihash.Cast(mhbuf)
+	if err != nil {
+		return nil, err
+	}
+	// b58 will never require quoting
+	u := "http://localhost:5001/api/v0/block/get?arg=" + mh.B58String()
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	// IPFS likes to slam the socket shut, triggering
+	// https://github.com/golang/go/issues/8946
+	req.Close = true
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http error: %v", resp.Status)
+	}
+	return resp.Body, nil
 }
 
 // WriteACI takes an ACI encapsulated in an io.Reader, decompresses it if
@@ -504,6 +556,15 @@ func (s Store) GetImageManifest(key string) (*schema.ImageManifest, error) {
 	defer keyLock.Close()
 
 	imj, err := s.stores[imageManifestType].Read(key)
+	// TODO can't fetch manifests from a real CAS because they're
+	// identified by the hash of the *image*, not of the manifest
+	// 
+	// if err != nil && os.IsNotExist(err) {
+	// 	// try secondary source
+	// 	if imj2, err2 := s.readFromIPFS(key); err2 == nil {
+	// 		imj, err = imj2, err2
+	// 	}
+	// }
 	if err != nil {
 		return nil, fmt.Errorf("error retrieving image manifest: %v", err)
 	}
@@ -512,6 +573,15 @@ func (s Store) GetImageManifest(key string) (*schema.ImageManifest, error) {
 		return nil, fmt.Errorf("error unmarshalling image manifest: %v", err)
 	}
 	return im, nil
+}
+
+func (s *Store) readFromIPFS(key string) ([]byte, error) {
+	r, err := s.readStreamFromIPFS(key)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return ioutil.ReadAll(r)
 }
 
 // GetACI retrieves the ACI that best matches the provided app name and labels.
